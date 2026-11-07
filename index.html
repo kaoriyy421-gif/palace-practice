@@ -7,4 +7,126 @@ const SUPABASE_URL = 'https://ossnwjrknrvtmbhdsgor.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_CO046kk1NH1pHF36IO1LeQ_pFvRhBDM';
 
   const names=['郁美','今井','三輪','安田','山田'];const now=new Date();let year=now.getFullYear(),month=now.getMonth();const $=id=>document.getElementById(id);const key=()=>`palace-practice-preview-${year}-${month+1}`;const load=()=>{try{return JSON.parse(localStorage.getItem(key())||'{}')}catch{return {}}};function render(){const state=load();$('month').textContent=`${year}年 ${month+1}月`;const counts=names.map((_,i)=>Object.entries(state).filter(([k,v])=>k.endsWith('-'+i)&&v).length);$('counts').innerHTML=names.map((n,i)=>`<div class="count"><div class="name">${n}</div><strong>${counts[i]}</strong><span>回 ♡</span></div>`).join('');$('total').textContent=`合計 ${counts.reduce((a,b)=>a+b,0)} 回`;const num=new Date(year,month+1,0).getDate();let html='';for(let day=1;day<=num;day++){const w=new Date(year,month,day).getDay();const cls=w===0?'sun':w===6?'sat':'';const today=year===now.getFullYear()&&month===now.getMonth()&&day===now.getDate();html+=`<tr class="${today?'today':''}"><td class="date ${cls}">${day}<small>${'日月火水木金土'[w]}</small></td>${names.map((n,i)=>`<td><input class="check" type="checkbox" aria-label="${month+1}月${day}日 ${n} 練習済み" data-day="${day}" data-person="${i}" ${state[`${day}-${i}`]?'checked':''}></td>`).join('')}</tr>`}$('days').innerHTML=html;document.querySelectorAll('.check').forEach(el=>el.addEventListener('change',e=>{const data=load();data[`${e.target.dataset.day}-${e.target.dataset.person}`]=e.target.checked;try{localStorage.setItem(key(),JSON.stringify(data))}catch{alert('このブラウザでは保存できません')}render()}))}function shift(n){month+=n;if(month<0){month=11;year--}if(month>11){month=0;year++}render()}$('prev').onclick=()=>shift(-1);$('next').onclick=()=>shift(1);$('current').onclick=()=>{year=now.getFullYear();month=now.getMonth();render()};render();
+
+const api = `${SUPABASE_URL}/rest/v1/practice_checks`;
+const headers = {
+  apikey: SUPABASE_KEY,
+  Authorization: `Bearer ${SUPABASE_KEY}`,
+  "Content-Type": "application/json"
+};
+
+let sharedRows = [];
+let requestNumber = 0;
+
+render = async function () {
+  const request = ++requestNumber;
+  const selectedMonth = `${year}-${String(month + 1).padStart(2, "0")}`;
+
+  $("month").textContent = `${year}年 ${month + 1}月`;
+  $("days").innerHTML = '<tr><td colspan="6">読み込み中...</td></tr>';
+
+  try {
+    const response = await fetch(
+      `${api}?month=eq.${selectedMonth}&select=*`,
+      { headers, cache: "no-store" }
+    );
+    if (!response.ok) throw new Error(await response.text());
+
+    const rows = await response.json();
+    if (request !== requestNumber) return;
+    sharedRows = rows;
+
+    const counts = names.map(name =>
+      rows.filter(r => r.staff === name && r.checked === true).length
+    );
+
+    $("counts").innerHTML = names.map((name, i) =>
+      `<div class="count"><div class="name">${name}</div><strong>${counts[i]}</strong><span>回 ♡</span></div>`
+    ).join("");
+
+    $("total").textContent =
+      `合計 ${counts.reduce((a, b) => a + b, 0)} 回`;
+
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    let html = "";
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const weekday = new Date(year, month, day).getDay();
+      const color = weekday === 0 ? "sun" : weekday === 6 ? "sat" : "";
+      const today = year === now.getFullYear()
+        && month === now.getMonth()
+        && day === now.getDate();
+
+      html += `<tr class="${today ? "today" : ""}">
+        <td class="date ${color}">${day}
+        <small>${"日月火水木金土"[weekday]}</small></td>`;
+
+      for (const name of names) {
+        const record = rows.find(r =>
+          r.day === day && r.staff === name
+        );
+        html += `<td><input class="check" type="checkbox"
+          data-day="${day}" data-staff="${name}"
+          ${record?.checked === true ? "checked" : ""}></td>`;
+      }
+      html += "</tr>";
+    }
+
+    $("days").innerHTML = html;
+
+    document.querySelectorAll(".check").forEach(input => {
+      input.addEventListener("change", async function () {
+        const day = Number(this.dataset.day);
+        const staff = this.dataset.staff;
+        const checked = this.checked;
+        const previous = !checked;
+        this.disabled = true;
+
+        try {
+          const existing = sharedRows.find(r =>
+            r.day === day && r.staff === staff
+          );
+
+          let response;
+          if (existing) {
+            response = await fetch(`${api}?id=eq.${existing.id}`, {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({ checked })
+            });
+          } else {
+            response = await fetch(api, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                month: selectedMonth, day, staff, checked
+              })
+            });
+          }
+
+          if (!response.ok) throw new Error(await response.text());
+          await render();
+        } catch (error) {
+          this.checked = previous;
+          this.disabled = false;
+          alert("保存できませんでした。設定を確認してください。");
+          console.error(error);
+        }
+      });
+    });
+
+    const notice = document.querySelector(".notice");
+    if (notice) {
+      notice.innerHTML =
+        "🌼 チェックは共通データベースに保存されます。ほかの端末ではページを開き直すと最新の記録が表示されます。";
+    }
+  } catch (error) {
+    if (request !== requestNumber) return;
+    $("days").innerHTML =
+      '<tr><td colspan="6">読み込みに失敗しました</td></tr>';
+    console.error(error);
+  }
+};
+
+render();
 </script></body></html>
